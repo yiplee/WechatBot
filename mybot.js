@@ -3,7 +3,6 @@ const { Wechaty, Room ,Contact, config, Message, MsgType} = require('wechaty')
 
 bot = Wechaty.instance({ profile: config.default.DEFAULT_PROFILE })
 
-var queue = 'stargazers'
 var open = require('amqplib').connect('amqp://localhost');
 
 bot
@@ -20,8 +19,9 @@ bot
         open.then(function(conn) {
             return conn.createChannel();
           }).then(function(ch) {
-            return ch.assertQueue(queue,{durable: false}).then(function(ok) {
-              return ch.consume(queue, async function(msg) {
+            let q = "wechat_send"
+            return ch.assertQueue(q,{durable: false}).then(function(ok) {
+              return ch.consume(q, async function(msg) {
                 if (msg !== null) {
                     let obj = JSON.parse(msg.content.toString())
                     let content = obj.msg
@@ -29,17 +29,17 @@ bot
                     let room = obj.room
 
                     if (content) {
-                        if (from) {
-                            let receiver = await Contact.find({name:from})
-                            if (receiver) {
-                                receiver.say(content)
-                            }
-                        } else if (room) {
+                        if (room) {
                             let receiver = await Room.find({topic:room})
                             if (receiver) {
                                 receiver.say(content)
                             }
-                        }
+                        } else if (from) {
+                            let receiver = await Contact.find({name:from})
+                            if (receiver) {
+                                receiver.say(content)
+                            }
+                        } 
                     }
                     ch.ack(msg)
                 }
@@ -78,8 +78,9 @@ bot
         open.then(function(conn) {
             return conn.createChannel()
         }).then(function(ch) {
-            return ch.assertQueue(queue,{durable: false}).then(function(ok) {
-              return ch.sendToQueue(queue, new Buffer.from(message,'utf-8'))
+            let q = "wechat_get"
+            return ch.assertQueue(q,{durable: false}).then(function(ok) {
+              return ch.sendToQueue(q, new Buffer.from(message,'utf-8'))
             })
         }).catch(console.warn)
 	})
