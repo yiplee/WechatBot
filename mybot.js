@@ -73,7 +73,6 @@ bot
         }
 
         message = JSON.stringify(payload)
-        console.log(message)
 
         open.then(function(conn) {
             return conn.createChannel()
