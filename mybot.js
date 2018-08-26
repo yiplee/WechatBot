@@ -1,88 +1,92 @@
-// import { Wechaty, Room, Contact, config, Message } from "wechaty"
-const { Wechaty, Room ,Contact, config, Message, MsgType} = require('wechaty')
+const {
+  Wechaty,
+  config,
+  Friendship
+} = require("wechaty")
 
-bot = Wechaty.instance({ profile: config.default.DEFAULT_PROFILE })
+const bot = new Wechaty({
+  profile: config.default.DEFAULT_PROFILE
+})
 
-var open = require('amqplib').connect('amqp://localhost');
+var moment = require('moment')
+var momentDurationFormatSetup = require('moment-duration-format')
+momentDurationFormatSetup(moment)
+
+var redis = require("redis")
+var sub = redis.createClient()
+var pub = redis.createClient()
 
 bot
-	.on('scan', (url, code) => {
-		if (!/201|200/.test(String(code))) {
-			const loginUrl = url.replace(/\/qrcode\//, '/l/')
-			require('qrcode-terminal').generate(loginUrl)
-		}
-	})
+  .on("scan", (url, code) => {
+    if (!/201|200/.test(String(code))) {
+      const loginUrl = url.replace(/\/qrcode\//, "/l/");
+      require("qrcode-terminal").generate(loginUrl)
+    }
+  })
 
-	.on('login', (user) => {
-        console.log(`${user} login`)
+  .on("login", user => {
+    console.log(`${user} login`)
+    bot.userSelf()
 
-        open.then(function(conn) {
-            return conn.createChannel();
-          }).then(function(ch) {
-            let q = "wechat_send"
-            return ch.assertQueue(q,{durable: false}).then(function(ok) {
-              return ch.consume(q, async function(msg) {
-                if (msg !== null) {
-                    let obj = JSON.parse(msg.content.toString())
-                    let content = obj.msg
-                    let from = obj.from
-                    let room = obj.room
-
-                    if (content) {
-                        if (room) {
-                            let receiver = await Room.find({topic:room})
-                            if (receiver) {
-                                receiver.say(content)
-                            }
-                        } else if (from) {
-                            let receiver = await Contact.find({name:from})
-                            if (receiver) {
-                                receiver.say(content)
-                            }
-                        } 
-                    }
-                    ch.ack(msg)
-                }
-              });
-            });
-          }).catch(console.warn);
-	})
-
-	.on('friend', async function (contact, request) {
-		if (request) {
-			await request.accept()
-		}
-	})
-
-	.on('message', (m) => {
-		const contact = m.from()
-		const content = m.content()
-		const room = m.room()
-
-		if (m.self() || m.type() != MsgType.TEXT) {
-			return
-        }
-        
-        const payload = {
-            "msg":content,
-            "from":contact.name(),
+    sub.on("message", async function (channel, message) {
+      let reply = JSON.parse(message);
+      if (reply.msg) {
+        var receiver = null;
+        if (reply.room) {
+          receiver = await bot.Room.find({
+            topic: reply.room
+          });
+        } else if (reply.user) {
+          receiver = await bot.Contact.find({
+            name: reply.user
+          });
         }
 
-        if (room) {
-            payload.room = room.topic()
+        if (receiver) {
+          receiver.say(reply.msg)
         }
+      }
+    });
 
-        message = JSON.stringify(payload)
+    sub.subscribe("reply");
+  })
 
-        open.then(function(conn) {
-            return conn.createChannel()
-        }).then(function(ch) {
-            let q = "wechat_get"
-            return ch.assertQueue(q,{durable: false}).then(function(ok) {
-              return ch.sendToQueue(q, new Buffer.from(message,'utf-8'))
-            })
-        }).catch(console.warn)
-	})
+  .on("friendship", async friendship => {
+    try {
+      if (friendship.type() == Friendship.Type.Receive && friendship.hello() == "yiplee") {
+        await friendship.accept();
+      }
+    } catch (e) {
+      console.error(e)
+    }
+  })
 
-    .start()
-    .catch(e => console.error(e))
+  .on("message", async m => {
+    if (m.self() || m.type() != bot.Message.Type.Text) {
+      return;
+    }
+
+    const payload = {
+      user: m.from().name(),
+      msg: m.text(),
+      mention: await m.mentionSelf()
+    };
+
+    const room = m.room();
+    if (room) {
+      payload.room = await room.topic()
+    } else if (payload.msg == "ping") {
+      const time = process.uptime()
+      self = bot.userSelf()
+      m.say("wechat bot: " + self.name() + "\nuptime: " + moment.duration(time, "seconds").format())
+    }
+
+    pub.publish("reply", JSON.stringify(payload))
+  })
+
+  .start()
+  .catch(async e => {
+    console.error("Bot start() fail:", e)
+    await bot.stop()
+    process.exit(-1)
+  })
